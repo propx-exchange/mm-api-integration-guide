@@ -10,9 +10,9 @@ import threading
 import uuid
 
 from urllib.parse import urljoin
-from src import config
-from src.log import logging
-from src import constants
+import config
+from log import logging
+import constants
 
 
 class MMInteractions:
@@ -60,10 +60,12 @@ class MMInteractions:
         logging.info("start to get odds ladder")
         odds_ladder_url = urljoin(self.base_url, config.URL['mm_odds_ladder'])
         odds_response = requests.get(odds_ladder_url, headers=self.__get_auth_header())
+        #logging.info(f"odds_response {odds_response}")
         if odds_response.status_code != 200:
             logging.info("not able to get valid odds from api, fall back to local constants")
             self.valid_odds = constants.VALID_ODDS_BACKUP
         else:
+            #logging.info(f"odds_response {odds_response.json()}")
             self.valid_odds = odds_response.json()['data']
 
         # initiate available tournaments/sport_events
@@ -219,59 +221,6 @@ class MMInteractions:
         self.balance = json.loads(response.content).get('data', {}).get('balance', 0)
         logging.info(f"still have ${self.balance} left")
 
-    def start_betting(self):
-        """
-        Example on how to place wagers using single wager placement restufl api, place_wager,
-         also batch wager placement restfu api place_multiple_wagers
-        :return: Wager ids returned from the api are stored in a class object for wager cancellation example
-        """
-        logging.info("Start betting, randomly :)")
-        bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
-        batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
-        if '.prophetbettingexchange' in bet_url:
-            raise Exception("only allowed to run in non production environment")
-        for key in self.sport_events:
-            one_event = self.sport_events[key]
-            for market in one_event.get('markets', []):
-                if market['type'] == 'moneyline':
-                    # only bet on moneyline
-                    if random.random() < 0.3:   # 30% chance to bet
-                        for selection in market.get('selections', []):
-                            if random.random() < 0.3: #30% chance to bet
-                                odds_to_bet = self.__get_random_odds()
-                                external_id = str(uuid.uuid1())
-                                logging.info(f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
-                                body_to_send = {
-                                    'external_id': external_id,
-                                    'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_bet,
-                                    'stake': 1.0
-                                }
-                                bet_response = requests.post(bet_url, json=body_to_send,
-                                                             headers=self.__get_auth_header())
-                                if bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
-                                # testing batch place wagers
-                                batch_n = 3
-                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
-                                batch_body_to_send = [{
-                                    'external_id': external_id_batch[x],
-                                    'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_bet,
-                                    'stake': 1.0
-                                } for x in range(batch_n)]
-                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
-                                                                   headers=self.__get_auth_header())
-                                if batch_bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
-                                        self.wagers[wager['external_id']] = wager['id']
-
     def cancel_all_wagers(self):
         """
         Upon the event your side needs to hit a panic button and cancel all your open wagers,
@@ -292,35 +241,29 @@ class MMInteractions:
             logging.info("cancelled successfully")
             self.wagers = dict()
 
-    def random_cancel_wager(self):
+    def cancel_wager(self, external_id, wager_id):
         """
         Example on how to cancel a single wager using cancel_wager endpoint
         :return:
         """
-        wager_keys = list(self.wagers.keys())
-        for key in wager_keys:
-            if key not in self.wagers:
-                # just in case already canceled by another thread
-                continue
-            wager_id = self.wagers[key]
-            cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
-            if random.random() < 0.5:  # 50% cancel
-                logging.info("start to cancel wager")
-                body = {
-                    'external_id': key,
-                    'wager_id': wager_id,
-                }
-                response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
-                if response.status_code != 200:
-                    if response.status_code == 404:
-                        logging.info("already cancelled")
-                        if key in self.wagers:
-                            self.wagers.pop(key)
-                    else:
-                        logging.info("failed to cancel")
+        cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
+        if random.random() < 0.5:  # 50% cancel
+            logging.info("start to cancel wager")
+            body = {
+                'external_id': external_id,
+                'wager_id': wager_id,
+            }
+            response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
+            if response.status_code != 200:
+                if response.status_code == 404:
+                    logging.info("already cancelled")
+                    if external_id in self.wagers:
+                        self.wagers.pop(external_id)
                 else:
-                    logging.info("cancelled successfully")
-                    self.wagers.pop(key)
+                    logging.info("failed to cancel")
+            else:
+                logging.info("cancelled successfully")
+                self.wagers.pop(external_id)
 
     def random_batch_cancel_wagers(self):
         """
@@ -329,7 +272,7 @@ class MMInteractions:
         """
         wager_keys = list(self.wagers.keys())
         batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
-        batch_cancel_body = [{'wager_id': self.wagers[x],
+        batch_cancel_body = [{'wager_id': self.wagers[x]['id'],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
         response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
@@ -382,46 +325,76 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds!")
-        schedule.every(10).seconds.do(self.start_betting)
-        schedule.every(9).seconds.do(self.random_cancel_wager)
-        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        schedule.every(10).seconds.do(self.mlb_strat)
+
         schedule.every(8).minutes.do(self.__auto_extend_session)
         # schedule.every(60).seconds.do(self.cancel_all_wagers)
 
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
 
-    def MLB_Test1(self):
-        logging.info("Start MLB TEST")
+    def mlb_strat(self):
+        logging.info("Start MLB strat.")
+        logging.info(f"Odds {self.valid_odds}")
         bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
         batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
         if '.prophetbettingexchange' in bet_url:
             raise Exception("only allowed to run in non production environment")
+        
+        # In V1, we should only have one quote outstanding per line_id. We reformat our wagers dict by line_id instead for ease
+        logging.info(f"wagers: {self.wagers}")
+        wagers_by_lineid = {inner_dict['line_id']: inner_dict for outer_key, inner_dict in self.wagers.items() if 'line_id' in inner_dict}
+        logging.info(f"wager line_id: {wagers_by_lineid}")
+
         for key in self.sport_events:
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
                 if market['type'] == 'moneyline':
                     # only bet on moneyline
                     for selection in market.get('selections', []):
-                        if random.random() < 1:  # 30% chance to bet
-                            odds_to_bet = +110
-                            external_id = str(uuid.uuid1())
-                            logging.info(
-                                f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
-                            body_to_send = {
-                                'external_id': external_id,
-                                'line_id': selection[0]['line_id'],
-                                'odds': odds_to_bet,
-                                'stake': 1.0
-                                }
-                            bet_response = requests.post(bet_url, json=body_to_send,
-                                                             headers=self.__get_auth_header())
-                            if bet_response.status_code != 200:
-                                logging.info(f"failed to bet, error {bet_response.content}")
+                        logging.info(f"selection {selection[0]}")
+                        logging.info(f"{selection[0]['display_name']}")
+                        logging.info(f"{selection[0]['display_odds']}")
+
+                        odds_to_bet = -selection[0]['odds']-1
+                        external_id = str(uuid.uuid1())
+                        line_id = selection[0]['line_id']
+
+                        # Do we have an outstanding bet?
+                        if line_id in wagers_by_lineid:
+                            logging.info(f"We already have a bet for line_id {line_id}")
+                            # Are we already top of book, in which case we continue and do nothing
+                            #logging.info(f'line_id {line_id}: our odds ({wagers_by_lineid[line_id]['odds']}) - best available odds ({selection[0]['odds']})')
+                            if wagers_by_lineid[line_id]['odds'] == selection[0]['odds']:
+                                logging.info("We are already top of book. Nothing to do.")
+                                continue 
+
+                            # We have an outstanding bet that is not the best price. Let us cancel that bet.
                             else:
-                                logging.info("successfully")
-                                self.wagers[external_id] = \
-                                json.loads(bet_response.content).get('data', {})['wager']['id']
+                                logging.info(f"We have a bet we want to cancel since it's not top of book.")
+                                self.cancel_wager(wagers_by_lineid[line_id]['external_id'], wagers_by_lineid[line_id]['id'])
+                        else:
+                            logging.info("We do not have an outstanding bet for this line.")
+
+                        logging.info(
+                            f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
+                        body_to_send = {
+                            'external_id': external_id,
+                            'line_id': line_id,
+                            'odds': odds_to_bet,
+                            'stake': 1.0
+                            }
+                        bet_response = requests.post(bet_url, json=body_to_send,
+                                                            headers=self.__get_auth_header())
+                        if bet_response.status_code != 200:
+                            logging.info(f"failed to bet, error {bet_response.content}")
+                        else:
+                            logging.info("successfully")
+                            logging.info(f"external_id: {external_id}")
+                            logging.info(f"bet_response: {json.loads(bet_response.content).get('data', {})['wager']}")
+                            #self.wagers_by_lineid[line_id] = json.loads(bet_response.content).get('data', {})['wager']
+                            self.wagers[external_id] = \
+                            json.loads(bet_response.content).get('data', {})['wager']
 
 
     def keep_alive(self):

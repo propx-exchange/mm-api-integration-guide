@@ -1,6 +1,6 @@
 import json
 
-with open('user_info.json') as fp:
+with open('src/user_info.json') as fp:
     user_info_dict = json.load(fp)
 
 MM_KEYS = {
