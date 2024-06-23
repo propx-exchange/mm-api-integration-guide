@@ -391,6 +391,39 @@ class MMInteractions:
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
 
+    def MLB_Test1(self):
+        logging.info("Start MLB TEST")
+        bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
+        if '.prophetbettingexchange' in bet_url:
+            raise Exception("only allowed to run in non production environment")
+        for key in self.sport_events:
+            one_event = self.sport_events[key]
+            for market in one_event.get('markets', []):
+                if market['type'] == 'moneyline':
+                    # only bet on moneyline
+                    for selection in market.get('selections', []):
+                        if random.random() < 1:  # 30% chance to bet
+                            odds_to_bet = +110
+                            external_id = str(uuid.uuid1())
+                            logging.info(
+                                f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
+                            body_to_send = {
+                                'external_id': external_id,
+                                'line_id': selection[0]['line_id'],
+                                'odds': odds_to_bet,
+                                'stake': 1.0
+                                }
+                            bet_response = requests.post(bet_url, json=body_to_send,
+                                                             headers=self.__get_auth_header())
+                            if bet_response.status_code != 200:
+                                logging.info(f"failed to bet, error {bet_response.content}")
+                            else:
+                                logging.info("successfully")
+                                self.wagers[external_id] = \
+                                json.loads(bet_response.content).get('data', {})['wager']['id']
+
+
     def keep_alive(self):
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
