@@ -352,7 +352,7 @@ class MMInteractions:
                 if market['type'] == 'moneyline':
                     # only bet on moneyline
                     for selection in market.get('selections', []):
-                        logging.info(f"selection {selection[0]}")
+                        logging.info(f"selection {selection}")
                         logging.info(f"{selection[0]['display_name']}")
                         logging.info(f"{selection[0]['display_odds']}")
 
